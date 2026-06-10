@@ -4,9 +4,9 @@
 
 | Output | Details |
 | :--- | :--- |
-| <img width="413" height="233" alt="soruce giff" src="https://github.com/user-attachments/assets/ccc727c9-c697-49f2-85e1-6f8c366f2019" /> | **Original Source**<br>Standard MP4 video file. |
+| <img src="https://github.com/user-attachments/assets/ccc727c9-c697-49f2-85e1-6f8c366f2019" width="400" alt="Original Source" /> | **Original Source**<br>Standard MP4 video file. |
 | <img src="https://github.com/user-attachments/assets/6bd7f5c0-81de-49fe-ba0d-9a8872ec8ae3" width="400" alt="ASCII Mode" /> | **ASCII Mode**<br>Showcases rendered using Mode 3 (32K Colors) from a 30fps source. |
-| <img src="https://github.com/user-attachments/assets/0d6e9d4c-662c-4e38-b451-70d9b142bc1d" width="400" alt="Pixel Mode" /> | **PIXEL Mode**<br>Showcases rendered using Mode 3 (32K Colors) combined with the `--pixel` flag for ultra-high fidelity. |
+| <img src="https://github.com/user-attachments/assets/1fd88c3d-97d1-441a-a071-16de24ea82c0" width="400" alt="PIXEL Mode" /> | **PIXEL Mode**<br>Showcases rendered using Mode 5 (16m Colors) combined with the `--pixel` flag for ultra-high fidelity. |
 
 ## 🎯 Strategic Vision & Core Capabilities
 
