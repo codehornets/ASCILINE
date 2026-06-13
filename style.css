@@ -261,3 +261,25 @@ body {
     border: none;
     cursor: pointer;
 }
+
+/* ── PAUSE EFFECT ──────────────────────── */
+@keyframes pause-tremble {
+    0%, 100% { transform: translate(0, 0); }
+    15%  { transform: translate(0px, 1px); }
+    35%  { transform: translate(1px, 0px); }
+    55%  { transform: translate(1px, -1px); }
+    75%  { transform: translate(0px, 0px); }
+}
+#player-container.paused {
+    filter: saturate(0.35) brightness(0.65) contrast(1.15);
+    cursor: pointer;
+}
+
+#player-container.paused #ascii-canvas,
+#player-container.paused #ascii-player {
+    animation: pause-tremble 0.12s steps(3) infinite;
+}
+
+#player-container.paused #ascii-player {
+    pointer-events: none;
+}

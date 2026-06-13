@@ -16,7 +16,7 @@ const audioEl   = document.getElementById('ascii-audio');
 const volumeSlider = document.getElementById('volume-slider');
 
 // ── STATE ──
-let state = 'IDLE'; // IDLE | PLAYING
+let state = 'IDLE'; // IDLE | PLAYING | PAUSED
 let ws = null;
 const frameBuffer = [];
 const BUFFER_SIZE = 4;
@@ -26,6 +26,7 @@ let frameInterval = 1000 / targetFps;
 let renderMode = 1;
 let pixelMode = false;
 let readyToRender = false;
+let pauseStartTime = 0;
 
 // Grid & Dimensions
 let gridCols = 0, gridRows = 0;
@@ -242,7 +243,7 @@ function connectWebSocket() {
     ws.onopen = () => { statusEl.textContent = 'Buffering...'; };
 
     ws.onclose = () => {
-        if (state === 'PLAYING') {
+        if (state === 'PLAYING' || state === 'PAUSED') {
             statusEl.textContent = 'Stream Ended.';
             statusEl.style.color = '#888';
             if (audioEl) audioEl.pause();
@@ -361,17 +362,77 @@ function finishStream() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     player.textContent = '';
     player.style.display = 'none';
+    container.classList.remove('paused');
     overlay.classList.remove('hidden');
     statusEl.textContent = 'Ready';
     statusEl.style.color = 'rgba(255,255,255,0.6)';
     readyToRender = false;
+    pauseStartTime = 0;
     frameBuffer.length = 0;
+}
+
+// ═══════════════════════════════════════
+//  PAUSE / RESUME
+// ═══════════════════════════════════════
+
+function togglePause() {
+    if (state === 'PLAYING') {
+        state = 'PAUSED';
+        pauseStartTime = performance.now();
+        // Live stream approach: mute audio instead of pausing it,
+        // so the master clock keeps ticking with the server.
+        if (audioEl && !audioEl.paused) {
+            audioEl.dataset.prePauseVolume = audioEl.volume;
+            audioEl.volume = 0;
+        }
+        container.classList.add('paused');
+        statusEl.textContent = '❚❚ PAUSED';
+        statusEl.style.color = '#888';
+    } else if (state === 'PAUSED') {
+        state = 'PLAYING';
+        pauseStartTime = 0;
+        
+        // Restore audio volume
+        if (audioEl && !audioEl.paused) {
+            audioEl.volume = audioEl.dataset.prePauseVolume !== undefined 
+                ? parseFloat(audioEl.dataset.prePauseVolume) 
+                : (volumeSlider ? volumeSlider.value : 1.0);
+        }
+
+        // Flush stale buffer frames — A/V sync catch-up handles the rest
+        frameBuffer.length = 0;
+        
+        container.classList.remove('paused');
+        statusEl.textContent = 'Resuming...';
+        statusEl.style.color = 'var(--accent-color)';
+        
+        // Restart render loop
+        lastRenderTime = performance.now();
+        lastFpsUpdate = performance.now();
+        frameCount = 0;
+        requestAnimationFrame(renderFrame);
+    }
 }
 
 // ── EVENT LISTENERS ──
 overlay.addEventListener('click', (e) => {
     e.stopPropagation();
     startStream();
+});
+
+// ── PAUSE TOGGLE (click on player area) ──
+container.addEventListener('click', (e) => {
+    if (e.target.closest('#play-overlay')) return;
+    if (window.getSelection().toString().length > 0) return;
+    togglePause();
+});
+
+// ── KEYBOARD: Space to toggle pause ──
+document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' && (state === 'PLAYING' || state === 'PAUSED')) {
+        e.preventDefault();
+        togglePause();
+    }
 });
 
 if (volumeSlider) {
