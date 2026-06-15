@@ -207,6 +207,9 @@ Because this engine bypasses standard browser constraints and ad-blockers (by re
 
 See the [LICENSE](LICENSE) file for the full text, which includes the **ANTI-ADVERTISEMENT RESTRICTION** clause.
 
+### 🟢 Live Interactive Showcase
+Experience the ASCILINE engine running live directly in your browser with multiple rendering modes. 👉 **[Try it out at asciline.dev](https://www.asciline.dev)**
+
 ## 📈 Star History
 [![Star History Chart](https://api.star-history.com/svg?repos=YusufB5/ASCILINE&type=Date)](https://star-history.com/#YusufB5/ASCILINE&Date)
 
