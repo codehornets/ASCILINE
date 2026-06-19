@@ -203,16 +203,23 @@ function connectWebSocket() {
                 }
                 if (timeTotal) timeTotal.textContent = formatTime(duration);
                 if (timeCurrent) timeCurrent.textContent = "00:00";
-                if (seekPlayed) seekPlayed.style.width = '0%';
+                if (seekPlayed) seekPlayed.style.transform = 'scaleX(0)';
 
                 audioOffset = 0;
-                setupScrub(currentQueueIdx);   // load hover thumbnails for this video
+                // Lazy-load hover thumbnails: only fetch on first hover
+                const qIdx = currentQueueIdx;
+                if (seekWrap && !scrubMeta) {
+                    seekWrap.addEventListener('mouseenter', () => {
+                        if (!scrubMeta) setupScrub(qIdx);
+                    }, { once: true });
+                }
                 
                 buildCanvas(parseInt(p[3]), parseInt(p[4]));
 
                 // Initialize adaptive codec decoder (pixel=3 bytes, ASCII color=4 bytes)
-                if (typeof AscilineCodec !== 'undefined' && renderMode > 1) {
-                    codecDecoder = AscilineCodec.makeDecoder(pixelMode ? 3 : 4);
+                // Pixel mode explicitly bypasses the codec for maximum raw throughput
+                if (typeof AscilineCodec !== 'undefined' && renderMode > 1 && !pixelMode) {
+                    codecDecoder = AscilineCodec.makeDecoder(4);
                 } else {
                     codecDecoder = null;
                 }
@@ -320,7 +327,7 @@ function renderFrame(now) {
     if (!isSeeking && seekBar) {
         if (now - lastUiUpdateTime >= 100) {
             seekBar.value = masterClock;
-            if (seekPlayed && duration) seekPlayed.style.width = Math.min(100, (masterClock / duration) * 100) + '%';
+            if (seekPlayed && duration) seekPlayed.style.transform = `scaleX(${Math.min(1, masterClock / duration)})`;
             lastUiUpdateTime = now;
         }
         const formattedTime = formatTime(masterClock);
@@ -495,7 +502,7 @@ if (playPauseBtn) {
 function doSeek(targetSec) {
     if (duration) targetSec = Math.max(0, Math.min(targetSec, duration));
     if (seekBar) seekBar.value = targetSec;
-    if (seekPlayed && duration) seekPlayed.style.width = Math.min(100, (targetSec / duration) * 100) + '%';
+    if (seekPlayed && duration) seekPlayed.style.transform = `scaleX(${Math.min(1, targetSec / duration)})`;
 
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'seek', time: targetSec }));

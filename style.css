@@ -284,10 +284,13 @@ body {
     position: absolute;
     left: 0;
     height: 4px;
-    width: 0;
+    width: 100%;
     background: var(--accent-color);
     border-radius: 2px;
     pointer-events: none;
+    transform-origin: left;
+    transform: scaleX(0);
+    will-change: transform;
 }
 .seek-slider {
     -webkit-appearance: none;

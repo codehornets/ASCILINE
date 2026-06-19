@@ -486,6 +486,58 @@ async def websocket_endpoint(websocket: WebSocket):
             receive_task = asyncio.create_task(receive_commands())
 
             raw_frame_num = 0
+
+            # ── THREAD-OFFLOADED FRAME PRODUCER ──
+            # Bundles ALL CPU work (decode + process + encode) into one
+            # closure that runs in a thread pool, keeping the asyncio
+            # event loop 100% free for I/O (WebSocket send) and timing.
+            def produce(pf, fi):
+                """Decode, process, encode one frame. Returns None on EOF.
+                pf = prev_frame, fi = frame_index."""
+                for _ in range(skip_n - 1):
+                    if not decoder.grab():
+                        return None
+                try:
+                    gray_frame, bgr_frame = next(decoder)
+                except StopIteration:
+                    return None
+
+                if pixel_mode:
+                    raw_sz = 4 + rows * cols * 3
+                    struct.pack_into(">I", pixel_send_buf, 0, fi)
+                    pixel_send_buf[4:] = bgr_frame.tobytes()
+                    buf = bytes(pixel_send_buf)
+                    return ('bytes', buf, pf, raw_sz, len(buf))
+                else:
+                    indices = np.floor_divide(gray_frame, max(1, 256 // mapper._n))
+                    np.clip(indices, 0, mapper._n - 1, out=indices)
+
+                    if render_mode == 1:
+                        char_matrix = mapper._lut[indices]
+                        lines = [''.join(row) for row in char_matrix]
+                        payload = f"{fi}\n" + '\n'.join(lines)
+                        sz = len(payload.encode('utf-8'))
+                        return ('text', payload, pf, sz, sz)
+                    else:
+                        char_codes = char_byte_lut[indices]
+                        rgb = bgr_frame[:, :, ::-1]
+                        if qb > 0:
+                            rgb = (rgb >> qb) << qb
+                        frame_buf[:, :, 0] = char_codes
+                        frame_buf[:, :, 1:] = rgb
+                        raw_sz = 4 + rows * cols * 4
+                        if adaptive:
+                            msg, npf = encode_frame(
+                                frame_buf.copy(), pf, fi, 3, tolerance)
+                            return ('bytes', msg, npf, raw_sz, len(msg))
+                        else:
+                            struct.pack_into(">I", ascii_send_buf, 0, fi)
+                            ascii_send_buf[4:] = frame_buf.tobytes()
+                            buf = bytes(ascii_send_buf)
+                            return ('bytes', buf, pf, raw_sz, len(buf))
+
+            _loop = asyncio.get_event_loop()
+
             try:
                 while True:
                     while not cmd_queue.empty():
@@ -493,82 +545,36 @@ async def websocket_endpoint(websocket: WebSocket):
                         if msg.get("type") == "pause":
                             is_paused = msg.get("paused", False)
                             if not is_paused:
-                                start_time = asyncio.get_event_loop().time() - (frame_index * frame_t)
+                                start_time = _loop.time() - (frame_index * frame_t)
                                 bw_start_time = time.time()
                         elif msg.get("type") == "seek":
                             target_sec = float(msg.get("time", 0))
                             decoder.seek(target_sec)
                             prev_frame = None
                             frame_index = int(target_sec * effective_fps)
-                            start_time = asyncio.get_event_loop().time() - (frame_index * frame_t)
+                            start_time = _loop.time() - (frame_index * frame_t)
                             bw_start_time = time.time()
 
                     if is_paused:
                         await asyncio.sleep(0.1)
                         continue
 
-                    # ── FPS DECIMATION via grab() ──
-                    # For 60→30 fps: grab (skip) 1 frame, then decode 1 frame.
-                    # grab() is ~10x faster than read() because it skips decoding.
-                    for _ in range(skip_n - 1):
-                        if not decoder.grab():
-                            break  # EOF reached during skip
+                    # ALL CPU work in thread pool — event loop stays 100% free
+                    result = await _loop.run_in_executor(
+                        None, produce, prev_frame, frame_index)
 
-                    try:
-                        gray_frame, bgr_frame = next(decoder)
-                    except StopIteration:
+                    if result is None:
                         break
 
-                    if pixel_mode:
-                        # ── PIXEL MODE: raw BGR (3 bytes/cell) ──
-                        raw_size = 4 + rows * cols * 3
-                        if adaptive:
-                            msg, prev_frame = encode_frame(
-                                np.ascontiguousarray(bgr_frame),
-                                prev_frame, frame_index, tolerance=tolerance)
-                            await websocket.send_bytes(msg)
-                            bw_bytes_sent += len(msg)
-                            bw_raw_bytes += raw_size
-                        else:
-                            # ── ZERO-COPY PIXEL MODE (legacy) ──
-                            struct.pack_into(">I", pixel_send_buf, 0, frame_index)
-                            pixel_send_buf[4:] = bgr_frame.tobytes()
-                            await websocket.send_bytes(bytes(pixel_send_buf))
-                            bw_bytes_sent += len(pixel_send_buf)
-                            bw_raw_bytes += len(pixel_send_buf)
-                    else:
-                        indices = np.floor_divide(gray_frame, max(1, 256 // mapper._n))
-                        np.clip(indices, 0, mapper._n - 1, out=indices)
+                    send_type, data, prev_frame, raw_size, wire_size = result
 
-                        if render_mode == 1:
-                            char_matrix = mapper._lut[indices]
-                            lines = [''.join(row) for row in char_matrix]
-                            payload = f"{frame_index}\n" + '\n'.join(lines)
-                            await websocket.send_text(payload)
-                            payload_size = len(payload.encode('utf-8'))
-                            bw_bytes_sent += payload_size
-                            bw_raw_bytes += payload_size
-                        else:
-                            char_codes = char_byte_lut[indices]
-                            rgb = bgr_frame[:, :, ::-1]
-                            if qb > 0:
-                                rgb = (rgb >> qb) << qb
-                            frame_buf[:, :, 0] = char_codes
-                            frame_buf[:, :, 1:] = rgb
-                            raw_size = 4 + rows * cols * 4
-                            if adaptive:
-                                msg, prev_frame = encode_frame(
-                                    frame_buf, prev_frame, frame_index,
-                                    tolerance=tolerance)
-                                await websocket.send_bytes(msg)
-                                bw_bytes_sent += len(msg)
-                                bw_raw_bytes += raw_size
-                            else:
-                                struct.pack_into(">I", ascii_send_buf, 0, frame_index)
-                                ascii_send_buf[4:] = frame_buf.tobytes()
-                                await websocket.send_bytes(bytes(ascii_send_buf))
-                                bw_bytes_sent += len(ascii_send_buf)
-                                bw_raw_bytes += len(ascii_send_buf)
+                    if send_type == 'text':
+                        await websocket.send_text(data)
+                    else:
+                        await websocket.send_bytes(data)
+
+                    bw_bytes_sent += wire_size
+                    bw_raw_bytes += raw_size
 
                     current_time = time.time()
                     if debug_mode and current_time - bw_start_time >= 1.0:
@@ -580,11 +586,11 @@ async def websocket_endpoint(websocket: WebSocket):
                         bw_bytes_sent = 0
                         bw_raw_bytes = 0
 
-                    elapsed = asyncio.get_event_loop().time() - start_time
+                    elapsed = _loop.time() - start_time
                     wait = (frame_index * frame_t) - elapsed
                     if wait > 0:
                         await asyncio.sleep(wait)
-                    
+
                     frame_index += 1
 
             finally:
@@ -778,6 +784,11 @@ if __name__ == "__main__":
     # Validate: --pixel requires color mode (2-5)
     if args.pixel and args.mode == 1:
         print("[ERROR] --pixel requires a color mode (--mode 2-5). B&W mode is text-only.")
+        exit(1)
+
+    # Validate: --pixel does not support adaptive codec quality flags
+    if args.pixel and args.quality != "lossless":
+        print("[ERROR] --pixel mode sends raw data and does not support the adaptive codec. Remove the --quality flag.")
         exit(1)
 
     # Build the queue
