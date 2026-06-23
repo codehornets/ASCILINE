@@ -276,9 +276,14 @@ function connectWebSocket() {
         } else {
             // Binary Frames — decoded via adaptive codec (raw/zlib/delta)
             if (codecDecoder) {
+                framesInFlight++;
                 codecDecoder.decode(event.data).then(({ frameIndex, frame }) => {
+                    framesInFlight--;
                     const frameTime = frameIndex / targetFps;
                     frameBuffer.push({ data: frame, time: frameTime });
+                }).catch(e => {
+                    framesInFlight--;
+                    console.error("Decode error", e);
                 });
             } else {
                 // Fallback: legacy 4-byte header
@@ -424,15 +429,16 @@ function renderFrame(now) {
 // ═══════════════════════════════════════
 
 // ── BACKPRESSURE REPORTING ──
-// Tell the server how many decoded frames are queued for render (frameBuffer
-// depth). When it grows the client is behind, and the server drops frames
-// server-side instead of making us decode (inflate + delta-patch) frames we
-// would only drop after. ~4 Hz is plenty: the server only needs a coarse signal.
+// Tell the server how many frames are currently stuck in the decode pipeline
+// (framesInFlight). When it grows, the client is CPU-bound, and the server 
+// drops frames instead of making us inflate+delta-patch them.
+let framesInFlight = 0;
+
 function startBufferReports() {
     stopBufferReports();
     bufferReportTimer = setInterval(() => {
         if (ws && ws.readyState === WebSocket.OPEN && state === 'PLAYING') {
-            ws.send(JSON.stringify({ type: 'buffer', depth: frameBuffer.length }));
+            ws.send(JSON.stringify({ type: 'buffer', depth: framesInFlight }));
         }
     }, 250);
 }
